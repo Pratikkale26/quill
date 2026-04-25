@@ -1,0 +1,95 @@
+@import "tailwindcss";
+
+:root {
+  --background: 250 250 250;
+  --foreground: 9 9 11;
+  --muted: 244 244 245;
+  --muted-foreground: 113 113 122;
+  --border: 228 228 231;
+  --card: 255 255 255;
+  --card-foreground: 9 9 11;
+  --primary: 24 24 27;
+  --primary-foreground: 250 250 250;
+  --accent: 244 244 245;
+  --accent-foreground: 9 9 11;
+  --ring: 24 24 27;
+
+  --quill-ink: 26 26 31;
+  --quill-paper: 250 248 240;
+  --quill-gold: 217 153 33;
+  --quill-wax: 137 36 36;
+  --quill-shadow: 0 0 0 / 0.06;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: 8 8 10;
+    --foreground: 250 250 250;
+    --muted: 24 24 27;
+    --muted-foreground: 161 161 170;
+    --border: 39 39 42;
+    --card: 17 17 19;
+    --card-foreground: 250 250 250;
+    --primary: 250 250 250;
+    --primary-foreground: 24 24 27;
+    --accent: 39 39 42;
+    --accent-foreground: 250 250 250;
+    --ring: 212 212 216;
+
+    --quill-paper: 22 19 14;
+  }
+}
+
+@theme inline {
+  --color-background: rgb(var(--background));
+  --color-foreground: rgb(var(--foreground));
+  --color-muted: rgb(var(--muted));
+  --color-muted-foreground: rgb(var(--muted-foreground));
+  --color-border: rgb(var(--border));
+  --color-card: rgb(var(--card));
+  --color-card-foreground: rgb(var(--card-foreground));
+  --color-primary: rgb(var(--primary));
+  --color-primary-foreground: rgb(var(--primary-foreground));
+  --color-accent: rgb(var(--accent));
+  --color-accent-foreground: rgb(var(--accent-foreground));
+  --color-ring: rgb(var(--ring));
+
+  --color-ink: rgb(var(--quill-ink));
+  --color-paper: rgb(var(--quill-paper));
+  --color-gold: rgb(var(--quill-gold));
+  --color-wax: rgb(var(--quill-wax));
+
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --font-serif: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+}
+
+html,
+body {
+  background: rgb(var(--background));
+  color: rgb(var(--foreground));
+}
+
+body {
+  font-family: var(--font-sans), system-ui, sans-serif;
+}
+
+/* Wallet adapter modal — minimal styling so it doesn't look like 2017 */
+.wallet-adapter-modal-wrapper {
+  background: rgb(var(--card)) !important;
+  color: rgb(var(--card-foreground)) !important;
+}
+.wallet-adapter-button {
+  background: rgb(var(--primary)) !important;
+  color: rgb(var(--primary-foreground)) !important;
+  font-family: inherit !important;
+  font-weight: 500 !important;
+  border-radius: 0.625rem !important;
+}
+.wallet-adapter-button:not([disabled]):hover {
+  background: rgb(var(--primary)) !important;
+  opacity: 0.9;
+}
+.wallet-adapter-button-trigger {
+  background: rgb(var(--primary)) !important;
+}

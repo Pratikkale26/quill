@@ -1,0 +1,77 @@
+// Quill — private payments with E2EE notes.
+// Pairs on-chain private transfers (Loyal SDK) with off-chain
+// E2EE note ciphertext keyed by tx signature.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// A maintainer / creator who has shielded a deposit and wants to receive
+// private tips. Lookup by pubkey OR handle. Handle is optional but unique
+// when present.
+model Maintainer {
+  pubkey      String   @id // base58 Solana pubkey
+  handle      String?  @unique // url-safe slug, e.g. "pratik"
+  displayName String?
+  bio         String?
+  twitter     String? // x handle, no @
+  github      String?
+  website     String?
+  avatarUrl   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  notesReceived Note[]  @relation("Recipient")
+  notesSent     Note[]  @relation("Sender")
+  events        Event[] @relation("EventRecipient")
+  sentEvents    Event[] @relation("EventSender")
+}
+
+// E2EE note attached to a private transfer. Ciphertext is AES-GCM with key
+// derived from X25519 ECDH(ephemeralSecret, recipientCurvePub). Server holds
+// only the wrapped blob; only the recipient's wallet can decrypt.
+model Note {
+  id              String   @id @default(cuid())
+  txSignature     String   @unique // PER tx sig of the transfer
+  recipientPubkey String // base58 — index for inbox lookup
+  senderPubkey    String? // base58, optional (anon tips supported)
+  ephemeralPubkey String // base58 of X25519 ephemeral pubkey
+  nonce           String // base64 — AES-GCM nonce (12 bytes)
+  ciphertext      String // base64 — AES-GCM ciphertext + auth tag
+  amount          String // u64 string, denominated in tokenMint base units
+  tokenMint       String // base58 SPL mint
+  createdAt       DateTime @default(now())
+
+  recipient Maintainer  @relation("Recipient", fields: [recipientPubkey], references: [pubkey], onDelete: Cascade)
+  sender    Maintainer? @relation("Sender", fields: [senderPubkey], references: [pubkey])
+
+  @@index([recipientPubkey])
+  @@index([senderPubkey])
+}
+
+// Public event log for activity feeds. Stores only what's already
+// deducible from on-chain (recipient, amount, mint). Note content is
+// in Note. Kept so dashboards work without scraping chain.
+model Event {
+  id              String   @id @default(cuid())
+  type            String // "tip" | "shield" | "unshield" | "delegate"
+  txSignature     String   @unique
+  senderPubkey    String?
+  recipientPubkey String?
+  tokenMint       String?
+  amount          String? // u64 string
+  hasNote         Boolean  @default(false)
+  createdAt       DateTime @default(now())
+
+  recipient Maintainer? @relation("EventRecipient", fields: [recipientPubkey], references: [pubkey])
+  sender    Maintainer? @relation("EventSender", fields: [senderPubkey], references: [pubkey])
+
+  @@index([recipientPubkey])
+  @@index([type])
+}
