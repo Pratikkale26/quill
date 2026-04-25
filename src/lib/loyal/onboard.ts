@@ -65,6 +65,12 @@ const isAlreadyExistsLike = (msg: string): boolean =>
 const isAlreadyDelegatedLike = (msg: string): boolean =>
   /already delegated|delegated to ER/i.test(msg);
 
+const isAlreadyProcessedLike = (msg: string): boolean =>
+  /already.*been.*processed|transaction.*already.*processed/i.test(msg);
+
+const isNotDelegatedLike = (msg: string): boolean =>
+  /not delegated to ER|account is not delegated/i.test(msg);
+
 export async function onboardForToken(
   params: OnboardParams,
 ): Promise<OnboardProgress> {
@@ -256,6 +262,9 @@ export async function topUpDelegatedDeposit(
   const progress: TopUpProgress = { ...initialTopUpProgress };
   const tick = () => onProgress?.({ ...progress });
 
+  // We snapshot state at each branch point so "already processed"
+  // errors (a previous tx landed but its promise threw locally) can be
+  // resolved against the actual chain instead of bailing.
   progress.undelegate = { state: "running" };
   tick();
   try {
@@ -269,14 +278,28 @@ export async function topUpDelegatedDeposit(
     });
     progress.undelegate = { state: "succeeded", signature: sig };
   } catch (e) {
-    progress.undelegate = { state: "failed", error: errMsg(e) };
-    tick();
-    return progress;
+    const msg = errMsg(e);
+    if (isAlreadyProcessedLike(msg) || isNotDelegatedLike(msg)) {
+      // Either the undelegate already landed (tx hash collision on retry)
+      // OR we never were delegated. Either way, the on-chain state is
+      // the same as a successful undelegate — proceed.
+      progress.undelegate = {
+        state: "skipped",
+        reason: "already on base layer (tx may have landed earlier)",
+      };
+    } else {
+      progress.undelegate = { state: "failed", error: msg };
+      tick();
+      return progress;
+    }
   }
   tick();
 
   progress.fund = { state: "running" };
   tick();
+  const baseBefore = await client
+    .getBaseDeposit(user, tokenMint)
+    .catch(() => null);
   try {
     const result = await client.modifyBalance({
       tokenMint,
@@ -288,9 +311,29 @@ export async function topUpDelegatedDeposit(
     });
     progress.fund = { state: "succeeded", signature: result.signature };
   } catch (e) {
-    progress.fund = { state: "failed", error: errMsg(e) };
-    tick();
-    return progress;
+    const msg = errMsg(e);
+    if (isAlreadyProcessedLike(msg)) {
+      // Re-read base balance: if it grew by ≥ amount we're done.
+      const baseAfter = await client
+        .getBaseDeposit(user, tokenMint)
+        .catch(() => null);
+      const before = baseBefore?.amount ?? 0n;
+      const after = baseAfter?.amount ?? 0n;
+      if (after - before >= amount) {
+        progress.fund = {
+          state: "skipped",
+          reason: "tx already landed in a prior attempt",
+        };
+      } else {
+        progress.fund = { state: "failed", error: msg };
+        tick();
+        return progress;
+      }
+    } else {
+      progress.fund = { state: "failed", error: msg };
+      tick();
+      return progress;
+    }
   }
   tick();
 
@@ -305,7 +348,15 @@ export async function topUpDelegatedDeposit(
     });
     progress.redelegate = { state: "succeeded", signature: sig };
   } catch (e) {
-    progress.redelegate = { state: "failed", error: errMsg(e) };
+    const msg = errMsg(e);
+    if (isAlreadyDelegatedLike(msg) || isAlreadyProcessedLike(msg)) {
+      progress.redelegate = {
+        state: "skipped",
+        reason: "deposit already delegated",
+      };
+    } else {
+      progress.redelegate = { state: "failed", error: msg };
+    }
   }
   tick();
   return progress;
