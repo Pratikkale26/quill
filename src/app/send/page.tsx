@@ -1,3 +1,5 @@
+import { Suspense } from "react";
+
 import { SendForm } from "@/components/send/send-form";
 
 export const metadata = {
@@ -18,7 +20,9 @@ export default function SendPage() {
           recipient&apos;s wallet. They&apos;re the only one who can read it.
         </p>
       </header>
-      <SendForm />
+      <Suspense fallback={null}>
+        <SendForm />
+      </Suspense>
     </main>
   );
 }

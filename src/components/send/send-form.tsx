@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
 import { ArrowRight, Loader2, Lock, ExternalLink } from "lucide-react";
@@ -65,6 +66,7 @@ interface ResolveState {
 
 export function SendForm() {
   const { publicKey } = useWallet();
+  const searchParams = useSearchParams();
   const loyal = useLoyalClient();
   const deposit = useDeposit({
     client: loyal.status === "ready" ? loyal.client : null,
@@ -72,7 +74,9 @@ export function SendForm() {
     tokenMint: DEFAULT_MINT,
   });
 
-  const [recipientInput, setRecipientInput] = useState("");
+  const [recipientInput, setRecipientInput] = useState(
+    () => searchParams.get("to") ?? "",
+  );
   const [amountInput, setAmountInput] = useState("");
   const [note, setNote] = useState("");
   const [resolve, setResolve] = useState<ResolveState>({ state: "idle" });
