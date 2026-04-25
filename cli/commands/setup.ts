@@ -1,9 +1,11 @@
 import { PublicKey } from "@solana/web3.js";
+import nacl from "tweetnacl";
 
 import { buildLoyalClient } from "@/lib/loyal/client";
 import { onboardForToken } from "@/lib/loyal/onboard";
 import { DEFAULT_MINT } from "@/lib/constants";
 import { bytesToBase64 } from "@/lib/encoding";
+import { noteKeyRegistrationMessage } from "@/lib/letterbox";
 
 import { loadKeypair } from "../lib/keypair";
 import { deriveNoteKeyForKeypair } from "../lib/derive-note-key";
@@ -71,6 +73,15 @@ export async function setupCommand(args: Args): Promise<number> {
   const noteKp = deriveNoteKeyForKeypair(signer);
   const notePubB64 = bytesToBase64(noteKp.publicKey);
 
+  // Sign the registration proof with the wallet's ed25519 secret. The
+  // server verifies this so an attacker can't publish their own X25519
+  // key under our wallet pubkey and intercept inbound notes.
+  const proofMessage = noteKeyRegistrationMessage(
+    signer.publicKey.toBase58(),
+    notePubB64,
+  );
+  const proofSig = nacl.sign.detached(proofMessage, signer.secretKey);
+
   console.log(`${dim("•")} Registering with ${cyan(args.apiBase)}…`);
   const res = await fetch(`${args.apiBase}/api/keys`, {
     method: "POST",
@@ -78,6 +89,7 @@ export async function setupCommand(args: Args): Promise<number> {
     body: JSON.stringify({
       walletPubkey: signer.publicKey.toBase58(),
       noteKey: notePubB64,
+      signature: bytesToBase64(proofSig),
       handle: args.handle ?? null,
       displayName: args.displayName ?? null,
     }),

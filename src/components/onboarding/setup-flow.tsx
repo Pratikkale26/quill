@@ -91,7 +91,7 @@ function StepRow({
 }
 
 export function SetupFlow() {
-  const { publicKey } = useWallet();
+  const { publicKey, signMessage } = useWallet();
   const loyal = useLoyalClient();
   const noteKey = useNoteKey();
   const deposit = useDeposit({
@@ -109,6 +109,21 @@ export function SetupFlow() {
   const [handle, setHandle] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [twitter, setTwitter] = useState("");
+  const [fundInput, setFundInput] = useState("");
+
+  function parseFundAmount(input: string): bigint | null {
+    const trimmed = input.trim();
+    if (!trimmed) return 0n;
+    if (!/^\d+(\.\d+)?$/.test(trimmed)) return null;
+    const [whole, frac = ""] = trimmed.split(".");
+    if (frac.length > USDC_DECIMALS) return null;
+    const padded = (frac + "0".repeat(USDC_DECIMALS)).slice(0, USDC_DECIMALS);
+    try {
+      return BigInt(whole + padded);
+    } catch {
+      return null;
+    }
+  }
 
   const run = useCallback(async () => {
     if (loyal.status !== "ready" || !publicKey) {
@@ -119,16 +134,29 @@ export function SetupFlow() {
     setChainProgress(initialOnboardProgress);
     setRegisterState({ state: "pending" });
 
-    // Step 1-3: chain onboarding (init → permission → delegate)
+    const fundAmount = parseFundAmount(fundInput);
+    if (fundAmount === null) {
+      toast.error("Fund amount must be a positive number");
+      setRunning(false);
+      return;
+    }
+
+    // Steps 1-4: chain onboarding (init → fund → permission → delegate)
     const chain = await onboardForToken({
       client: loyal.client,
       user: publicKey,
       tokenMint: DEFAULT_MINT,
+      fundAmount,
       onProgress: setChainProgress,
     });
     setChainProgress(chain);
 
-    if (chain.delegate.state === "failed" || chain.permission.state === "failed" || chain.initialize.state === "failed") {
+    if (
+      chain.delegate.state === "failed" ||
+      chain.permission.state === "failed" ||
+      chain.initialize.state === "failed" ||
+      chain.fund.state === "failed"
+    ) {
       setRunning(false);
       toast.error("Couldn't shield your inbox — see status panel");
       return;
@@ -150,13 +178,29 @@ export function SetupFlow() {
     }
 
     const { bytesToBase64 } = await import("@/lib/encoding");
+    const { noteKeyRegistrationMessage } = await import("@/lib/letterbox");
+    const noteKeyB64 = bytesToBase64(noteKeyPair.publicKey);
     try {
+      // A second signMessage proves wallet ownership of the registration —
+      // without it the server would accept anyone's noteKey for any wallet.
+      // We don't reuse the derivation signature: that signature IS the
+      // noteKey seed, so handing it to the server would defeat the
+      // privacy boundary.
+      if (!signMessage) {
+        throw new Error("wallet doesn't support signMessage");
+      }
+      const proofMessage = noteKeyRegistrationMessage(
+        publicKey.toBase58(),
+        noteKeyB64,
+      );
+      const proofSig = await signMessage(proofMessage);
       const res = await fetch("/api/keys", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           walletPubkey: publicKey.toBase58(),
-          noteKey: bytesToBase64(noteKeyPair.publicKey),
+          noteKey: noteKeyB64,
+          signature: bytesToBase64(proofSig),
           handle: handle.trim() || null,
           displayName: displayName.trim() || null,
           twitter: twitter.trim() || null,
@@ -178,7 +222,16 @@ export function SetupFlow() {
     } finally {
       setRunning(false);
     }
-  }, [loyal, publicKey, noteKey, handle, displayName, twitter, deposit]);
+  }, [
+    loyal,
+    publicKey,
+    noteKey,
+    signMessage,
+    handle,
+    displayName,
+    twitter,
+    deposit,
+  ]);
 
   if (!publicKey) {
     return (
@@ -246,22 +299,49 @@ export function SetupFlow() {
             />
             <StepRow
               index={2}
+              title="Shield USDC into the deposit"
+              hint="Optional. Moves tokens from your ATA into the deposit vault. Fund 0 if you only want to receive."
+              status={chainProgress.fund}
+            />
+            <StepRow
+              index={3}
               title="Create PER permission"
               hint="Adds the access-control account that lets the TEE manage your deposit."
               status={chainProgress.permission}
             />
             <StepRow
-              index={3}
+              index={4}
               title="Delegate to MagicBlock TEE"
               hint="Flips ownership to the delegation program. From now on transfers happen privately inside the TEE."
               status={chainProgress.delegate}
             />
             <StepRow
-              index={4}
+              index={5}
               title="Register your encrypted-note key"
-              hint="One wallet signature derives an X25519 keypair. The public half is published; the secret stays in this browser."
+              hint="Two wallet signatures: derive an X25519 keypair, then prove ownership to the registry. Secret stays in this browser."
               status={registerState}
             />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="fund">Shield USDC (optional)</Label>
+            <div className="relative">
+              <Input
+                id="fund"
+                inputMode="decimal"
+                value={fundInput}
+                onChange={(e) => setFundInput(e.target.value)}
+                placeholder="0  (skip funding)"
+                disabled={running}
+              />
+              <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                USDC
+              </span>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Pulled from your devnet USDC ATA on this wallet. Leave blank
+              to onboard with an empty inbox — top up later.
+            </p>
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2">

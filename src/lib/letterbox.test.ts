@@ -6,6 +6,7 @@ import nacl from "tweetnacl";
 import {
   deriveNoteKeyFromSignature,
   noteKeyChallenge,
+  noteKeyRegistrationMessage,
   openNote,
   sealNote,
 } from "./letterbox";
@@ -90,5 +91,44 @@ describe("letterbox", () => {
     expect(new TextDecoder().decode(a)).not.toBe(
       new TextDecoder().decode(b),
     );
+  });
+
+  test("registration signature round-trips (CLI-style nacl.sign.detached)", () => {
+    // Simulates exactly what the CLI does in setup.ts and what the
+    // server does in /api/keys. If this passes, browser signMessage —
+    // which is plain Ed25519 over the same bytes — verifies the same
+    // way. (Solana wallet adapter spec mandates raw Ed25519 with no
+    // wrapper.)
+    const wallet = nacl.sign.keyPair();
+    const noteKey = nacl.box.keyPair();
+    const noteKeyB64 = bytesToBase64(noteKey.publicKey);
+    const walletB58 =
+      // base58-ish stub; the message is content-addressed to whatever
+      // string we hand it, so any pubkey-shaped representation works
+      // for the round-trip test.
+      "TestWallet" + bytesToBase64(wallet.publicKey).slice(0, 32);
+
+    const message = noteKeyRegistrationMessage(walletB58, noteKeyB64);
+    const sig = nacl.sign.detached(message, wallet.secretKey);
+    expect(sig.length).toBe(64);
+
+    const ok = nacl.sign.detached.verify(message, sig, wallet.publicKey);
+    expect(ok).toBe(true);
+
+    // Wrong noteKey under same wallet must fail.
+    const evilNoteKey = nacl.box.keyPair();
+    const evilMessage = noteKeyRegistrationMessage(
+      walletB58,
+      bytesToBase64(evilNoteKey.publicKey),
+    );
+    expect(
+      nacl.sign.detached.verify(evilMessage, sig, wallet.publicKey),
+    ).toBe(false);
+
+    // Different wallet pubkey must fail to verify.
+    const otherWallet = nacl.sign.keyPair();
+    expect(
+      nacl.sign.detached.verify(message, sig, otherWallet.publicKey),
+    ).toBe(false);
   });
 });

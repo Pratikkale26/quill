@@ -43,6 +43,27 @@ export function noteKeyChallenge(walletPubkeyBase58: string): Uint8Array {
   return utf8ToBytes(text);
 }
 
+/**
+ * Wallet-bound, noteKey-bound proof message that the registration server
+ * verifies. Distinct from the derivation challenge so the server never
+ * learns the derivation signature (which IS the noteKey seed). Two
+ * signMessage prompts at /setup is the price of keeping the noteKey
+ * secret out of server reach even if the server is compromised at
+ * registration time.
+ */
+export function noteKeyRegistrationMessage(
+  walletPubkeyBase58: string,
+  noteKeyPubkeyBase64: string,
+): Uint8Array {
+  const text =
+    `Quill ${NOTE_KEY_VERSION} register noteKey\n\n` +
+    `Wallet: ${walletPubkeyBase58}\n` +
+    `NoteKey: ${noteKeyPubkeyBase64}\n\n` +
+    `By signing you authorize the server to publish this Curve25519 pubkey ` +
+    `as your inbox key. Senders will encrypt to it.`;
+  return utf8ToBytes(text);
+}
+
 export interface NoteKeyPair {
   publicKey: Uint8Array; // 32 bytes
   secretKey: Uint8Array; // 32 bytes

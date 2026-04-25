@@ -5,6 +5,7 @@
 // created.
 
 import { PublicKey } from "@solana/web3.js";
+import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 import {
   getErValidatorForRpcEndpoint,
   type LoyalPrivateTransactionsClient,
@@ -21,12 +22,14 @@ export type StepStatus =
 
 export interface OnboardProgress {
   initialize: StepStatus;
+  fund: StepStatus;
   permission: StepStatus;
   delegate: StepStatus;
 }
 
 export const initialOnboardProgress: OnboardProgress = {
   initialize: { state: "pending" },
+  fund: { state: "pending" },
   permission: { state: "pending" },
   delegate: { state: "pending" },
 };
@@ -37,6 +40,17 @@ export interface OnboardParams {
   payer?: PublicKey; // defaults to user
   tokenMint: PublicKey;
   validator?: PublicKey; // defaults to per-network ER validator
+  /**
+   * Amount in token base units to shield during onboarding (between init
+   * and permission, per Shroud's verified order). Pass 0n or omit to skip
+   * funding — the deposit will still be created and delegated, just empty.
+   */
+  fundAmount?: bigint;
+  /**
+   * Override the user's token ATA. Defaults to the canonical SPL Token
+   * (not Token-2022) ATA for (user, tokenMint).
+   */
+  userTokenAccount?: PublicKey;
   onProgress?: (progress: OnboardProgress) => void;
 }
 
@@ -58,6 +72,9 @@ export async function onboardForToken(
   const payer = params.payer ?? user;
   const validator =
     params.validator ?? getErValidatorForRpcEndpoint(BASE_RPC);
+  const fundAmount = params.fundAmount ?? 0n;
+  const userTokenAccount =
+    params.userTokenAccount ?? getAssociatedTokenAddressSync(tokenMint, user);
 
   const progress: OnboardProgress = { ...initialOnboardProgress };
   const tick = () => onProgress?.({ ...progress });
@@ -87,7 +104,37 @@ export async function onboardForToken(
   }
   tick();
 
-  // 2. createPermission — returns null if already present.
+  // 2. (Optional) fund — modifyBalance(increase). Order matters:
+  // funding has to happen BEFORE delegate, because the base PDA can't
+  // be modifyBalance'd once it's owned by the delegation program.
+  if (fundAmount > 0n) {
+    progress.fund = { state: "running" };
+    tick();
+    try {
+      const result = await client.modifyBalance({
+        tokenMint,
+        user,
+        payer,
+        amount: fundAmount,
+        increase: true,
+        userTokenAccount,
+      });
+      progress.fund = { state: "succeeded", signature: result.signature };
+    } catch (e) {
+      progress.fund = { state: "failed", error: errMsg(e) };
+      tick();
+      return progress;
+    }
+    tick();
+  } else {
+    progress.fund = {
+      state: "skipped",
+      reason: "no fund amount provided",
+    };
+    tick();
+  }
+
+  // 3. createPermission — returns null if already present.
   progress.permission = { state: "running" };
   tick();
   try {
@@ -111,7 +158,7 @@ export async function onboardForToken(
   }
   tick();
 
-  // 3. delegateDeposit — flips owner to delegation program.
+  // 4. delegateDeposit — flips owner to delegation program.
   progress.delegate = { state: "running" };
   tick();
   try {
