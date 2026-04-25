@@ -210,3 +210,103 @@ export async function readDepositSnapshot(
     isDelegated: !!ephemeral && !base,
   };
 }
+
+import { MAGIC_CONTEXT_ID, MAGIC_PROGRAM_ID } from "@loyal-labs/private-transactions";
+
+export interface TopUpProgress {
+  undelegate: StepStatus;
+  fund: StepStatus;
+  redelegate: StepStatus;
+}
+
+export const initialTopUpProgress: TopUpProgress = {
+  undelegate: { state: "pending" },
+  fund: { state: "pending" },
+  redelegate: { state: "pending" },
+};
+
+export interface TopUpParams {
+  client: LoyalPrivateTransactionsClient;
+  user: PublicKey;
+  payer?: PublicKey;
+  tokenMint: PublicKey;
+  validator?: PublicKey;
+  amount: bigint;
+  userTokenAccount?: PublicKey;
+  onProgress?: (progress: TopUpProgress) => void;
+}
+
+/**
+ * Add balance to an already-delegated deposit. Pattern lifted from
+ * Shroud's signed-cancel: undelegate (committing PER state back to base) →
+ * modifyBalance(increase) → re-delegate. Each tx is a wallet popup; the
+ * undelegate blocks until the SDK confirms ownership flipped back to
+ * PROGRAM_ID on both layers.
+ */
+export async function topUpDelegatedDeposit(
+  params: TopUpParams,
+): Promise<TopUpProgress> {
+  const { client, user, tokenMint, amount, onProgress } = params;
+  const payer = params.payer ?? user;
+  const validator =
+    params.validator ?? getErValidatorForRpcEndpoint(BASE_RPC);
+  const userTokenAccount =
+    params.userTokenAccount ?? getAssociatedTokenAddressSync(tokenMint, user);
+
+  const progress: TopUpProgress = { ...initialTopUpProgress };
+  const tick = () => onProgress?.({ ...progress });
+
+  progress.undelegate = { state: "running" };
+  tick();
+  try {
+    const sig = await client.undelegateDeposit({
+      tokenMint,
+      user,
+      payer,
+      sessionToken: null,
+      magicProgram: MAGIC_PROGRAM_ID,
+      magicContext: MAGIC_CONTEXT_ID,
+    });
+    progress.undelegate = { state: "succeeded", signature: sig };
+  } catch (e) {
+    progress.undelegate = { state: "failed", error: errMsg(e) };
+    tick();
+    return progress;
+  }
+  tick();
+
+  progress.fund = { state: "running" };
+  tick();
+  try {
+    const result = await client.modifyBalance({
+      tokenMint,
+      user,
+      payer,
+      amount,
+      increase: true,
+      userTokenAccount,
+    });
+    progress.fund = { state: "succeeded", signature: result.signature };
+  } catch (e) {
+    progress.fund = { state: "failed", error: errMsg(e) };
+    tick();
+    return progress;
+  }
+  tick();
+
+  progress.redelegate = { state: "running" };
+  tick();
+  try {
+    const sig = await client.delegateDeposit({
+      tokenMint,
+      user,
+      payer,
+      validator,
+    });
+    progress.redelegate = { state: "succeeded", signature: sig };
+  } catch (e) {
+    progress.redelegate = { state: "failed", error: errMsg(e) };
+  }
+  tick();
+  return progress;
+}

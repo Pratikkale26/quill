@@ -21,9 +21,12 @@ import { useNoteKey } from "@/hooks/use-note-key";
 import { useDeposit } from "@/hooks/use-deposit";
 import {
   initialOnboardProgress,
+  initialTopUpProgress,
   onboardForToken,
+  topUpDelegatedDeposit,
   type OnboardProgress,
   type StepStatus,
+  type TopUpProgress,
 } from "@/lib/loyal/onboard";
 import { DEFAULT_MINT, USDC_DECIMALS } from "@/lib/constants";
 import { formatAmount, shortPubkey } from "@/lib/utils";
@@ -110,6 +113,51 @@ export function SetupFlow() {
   const [displayName, setDisplayName] = useState("");
   const [twitter, setTwitter] = useState("");
   const [fundInput, setFundInput] = useState("");
+
+  // Top-up flow (used when the deposit is already delegated and the user
+  // wants to add more shielded balance — undelegate → fund → re-delegate).
+  const [topUpInput, setTopUpInput] = useState("");
+  const [topUpRunning, setTopUpRunning] = useState(false);
+  const [topUpProgress, setTopUpProgress] =
+    useState<TopUpProgress>(initialTopUpProgress);
+
+  const runTopUp = useCallback(async () => {
+    if (loyal.status !== "ready" || !publicKey) {
+      toast.error("Connect a wallet first");
+      return;
+    }
+    const amount = parseFundAmount(topUpInput);
+    if (!amount || amount <= 0n) {
+      toast.error("Enter a positive USDC amount to top up");
+      return;
+    }
+    setTopUpRunning(true);
+    setTopUpProgress(initialTopUpProgress);
+    try {
+      const result = await topUpDelegatedDeposit({
+        client: loyal.client,
+        user: publicKey,
+        tokenMint: DEFAULT_MINT,
+        amount,
+        onProgress: setTopUpProgress,
+      });
+      setTopUpProgress(result);
+      const failed = Object.values(result).some(
+        (s) => s.state === "failed",
+      );
+      if (failed) {
+        toast.error("Top-up failed — see status panel");
+      } else {
+        toast.success(`Shielded ${topUpInput} USDC into your inbox`);
+        setTopUpInput("");
+        void deposit.refresh();
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setTopUpRunning(false);
+    }
+  }, [loyal, publicKey, topUpInput, deposit]);
 
   function parseFundAmount(input: string): bigint | null {
     const trimmed = input.trim();
@@ -462,6 +510,92 @@ export function SetupFlow() {
           </div>
         </CardContent>
       </Card>
+
+      {deposit.snapshot?.isDelegated && (
+        <Card className="md:col-span-2">
+          <CardHeader>
+            <CardTitle>Top up your shielded balance</CardTitle>
+            <CardDescription>
+              Your deposit is already delegated, so adding balance takes three
+              transactions: undelegate (commits PER state back to base) →
+              modifyBalance(increase) → re-delegate. Wallet popups in sequence.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            <div className="space-y-3 rounded-xl border border-border bg-background/40 p-4">
+              <StepRow
+                index={1}
+                title="Undelegate (commit PER state to base)"
+                hint="Returns the deposit's owner to the Loyal program so we can mutate its balance."
+                status={topUpProgress.undelegate}
+              />
+              <StepRow
+                index={2}
+                title="Move USDC into the deposit"
+                hint="Pulls from your ATA into the program vault. Requires devnet USDC at the ATA."
+                status={topUpProgress.fund}
+              />
+              <StepRow
+                index={3}
+                title="Re-delegate to the TEE"
+                hint="Flips ownership back to the delegation program. Future transfers stay private."
+                status={topUpProgress.redelegate}
+              />
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-[1fr_auto]">
+              <div className="space-y-1.5">
+                <Label htmlFor="topUp">Amount to add</Label>
+                <div className="relative">
+                  <Input
+                    id="topUp"
+                    inputMode="decimal"
+                    value={topUpInput}
+                    onChange={(e) => setTopUpInput(e.target.value)}
+                    placeholder="5"
+                    disabled={topUpRunning}
+                  />
+                  <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                    USDC
+                  </span>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  No devnet USDC at your ATA?{" "}
+                  <a
+                    href="https://spl-token-faucet.com/?token-name=USDC-Dev"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="underline"
+                  >
+                    spl-token-faucet.com
+                  </a>{" "}
+                  drips USDC-Dev (mint{" "}
+                  <code className="text-[10px]">4zMM…ncDU</code>).
+                </p>
+              </div>
+              <div className="self-end">
+                <Button
+                  onClick={runTopUp}
+                  disabled={topUpRunning}
+                  size="lg"
+                >
+                  {topUpRunning ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Topping up
+                    </>
+                  ) : (
+                    <>
+                      Shield this much
+                      <ArrowRight className="h-4 w-4" />
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }
