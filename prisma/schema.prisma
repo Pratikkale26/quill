@@ -24,6 +24,10 @@ model Maintainer {
   github      String?
   website     String?
   avatarUrl   String?
+  // base64 X25519 public key derived from a wallet-signed challenge.
+  // Senders encrypt notes to this; the matching secret stays in the
+  // recipient's sessionStorage and is never sent to the server.
+  noteKey     String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -33,17 +37,19 @@ model Maintainer {
   sentEvents    Event[] @relation("EventSender")
 }
 
-// E2EE note attached to a private transfer. Ciphertext is AES-GCM with key
-// derived from X25519 ECDH(ephemeralSecret, recipientCurvePub). Server holds
-// only the wrapped blob; only the recipient's wallet can decrypt.
+// E2EE note attached to a private transfer. Ciphertext is the output of
+// nacl.box(plaintext, nonce, recipientNoteKey, ephemeralSecret) — i.e.
+// X25519 ECDH + XSalsa20-Poly1305. Server holds only the wrapped blob;
+// only the recipient's wallet (which can re-derive its noteKey via
+// signMessage) can decrypt.
 model Note {
   id              String   @id @default(cuid())
   txSignature     String   @unique // PER tx sig of the transfer
   recipientPubkey String // base58 — index for inbox lookup
   senderPubkey    String? // base58, optional (anon tips supported)
-  ephemeralPubkey String // base58 of X25519 ephemeral pubkey
-  nonce           String // base64 — AES-GCM nonce (12 bytes)
-  ciphertext      String // base64 — AES-GCM ciphertext + auth tag
+  ephemeralPubkey String // base64 of X25519 ephemeral pubkey (32 bytes)
+  nonce           String // base64 — nacl.box nonce (24 bytes)
+  ciphertext      String // base64 — nacl.box output (plaintext + 16-byte MAC)
   amount          String // u64 string, denominated in tokenMint base units
   tokenMint       String // base58 SPL mint
   createdAt       DateTime @default(now())
