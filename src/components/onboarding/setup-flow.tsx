@@ -309,6 +309,37 @@ export function SetupFlow() {
     );
   }
 
+  // Compute a one-line status of the deposit so users in a half-state
+  // (e.g. a previous top-up undelegated then failed mid-fund) can see
+  // exactly which recovery action to take.
+  const statusBanner = (() => {
+    const snap = deposit.snapshot;
+    if (!snap) return null;
+    if (snap.isDelegated) {
+      const amt = snap.ephemeralAmount ?? 0n;
+      return {
+        tone: "ok" as const,
+        title: "Inbox active in TEE",
+        body:
+          amt === 0n
+            ? "No shielded balance yet — fill in 'Top up' below to add some USDC."
+            : `${formatAmount(amt, USDC_DECIMALS)} USDC shielded. Top up below to add more.`,
+      };
+    }
+    if (snap.baseAmount && snap.baseAmount > 0n) {
+      return {
+        tone: "warn" as const,
+        title: "Half-state — deposit not delegated",
+        body: `${formatAmount(snap.baseAmount, USDC_DECIMALS)} USDC sits on base layer. Click 'Claim my inbox' below (with fund amount left blank) to re-delegate it to the TEE. The init/permission steps will skip; only delegate runs.`,
+      };
+    }
+    return {
+      tone: "info" as const,
+      title: "No private inbox yet",
+      body: "Run the four steps below to claim one. Optionally enter a fund amount to shield USDC at the same time.",
+    };
+  })();
+
   if (loyal.status === "error") {
     return (
       <Card>
@@ -329,6 +360,23 @@ export function SetupFlow() {
 
   return (
     <div className="grid gap-6 md:grid-cols-[1fr_360px]">
+      {statusBanner && (
+        <div
+          className={`md:col-span-2 rounded-xl border px-4 py-3 text-sm ${
+            statusBanner.tone === "ok"
+              ? "border-emerald-500/30 bg-emerald-500/5 text-foreground"
+              : statusBanner.tone === "warn"
+                ? "border-amber-500/40 bg-amber-500/10 text-foreground"
+                : "border-border bg-muted/40 text-foreground"
+          }`}
+        >
+          <div className="font-medium">{statusBanner.title}</div>
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+            {statusBanner.body}
+          </p>
+        </div>
+      )}
+
       <Card>
         <CardHeader>
           <CardTitle>Claim your private inbox</CardTitle>
